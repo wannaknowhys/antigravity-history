@@ -163,15 +163,18 @@ def export(
             console.print(f"[dim]  Unindexed .pb files: {unindexed_count}[/dim]")
         console.print(f"[dim]  Total to export: {len(summaries)}[/dim]")
 
-    # Specified IDs (support on-demand loading)
+    # Specified IDs (support on-demand loading, exact or prefix match)
     if ids:
         for cid in ids:
-            if cid not in summaries:
+            if cid not in summaries and not any(k.startswith(cid) for k in summaries):
                 summaries[cid] = {
                     "summary": f"[on-demand] {cid[:8]}...",
                     "stepCount": 1000,
                 }
                 cascade_ep[cid] = {"port": default_ep["port"], "csrf": default_ep["csrf"]}
+        wanted = {k for k in summaries for cid in ids if k == cid or k.startswith(cid)}
+        summaries = {k: v for k, v in summaries.items() if k in wanted}
+        console.print(f"[dim]  Filtered by --id: {len(summaries)}[/dim]")
 
     # Filter today's conversations
     if today:
