@@ -19,6 +19,7 @@ from typing import Optional
 try:
     import typer
     from rich.console import Console
+    from rich.markup import escape
     from rich.table import Table
     from rich.progress import track
 except ImportError:
@@ -404,7 +405,7 @@ def list_conversations(
             })
         print(json_mod.dumps(records, indent=2, ensure_ascii=False))
     else:
-        table = Table(title=f"{len(summaries)} conversation(s) total", markup=False)
+        table = Table(title=f"{len(summaries)} conversation(s) total")
         table.add_column("#", style="dim", width=4)
         table.add_column("Last Modified", width=20)
         table.add_column("Steps", justify="right", width=6)
@@ -419,7 +420,7 @@ def list_conversations(
                 t,
                 str(info.get("stepCount", "?")),
                 "disk" if cid in disk_only else "api",
-                info.get("summary", "?")[:50],
+                escape(info.get("summary", "?")[:50]),
                 cid[:8] + "...",
             )
 
