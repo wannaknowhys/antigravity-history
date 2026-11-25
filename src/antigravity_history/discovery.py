@@ -6,10 +6,14 @@ Known issues addressed:
 - Port is dynamically assigned → scanned via netstat (Win) / lsof (Mac)
 - Multiple workspaces = multiple language_server instances → scan all, test each
 - macOS: Electron binds Unix Domain Sockets (not TCP) → lsof -i finds nothing → hang
+- CSRF token no longer in cmdline (Antigravity 2.35): read it from
+  ~/.gemini/antigravity/daemon/hub_<httpPort>.json (pid/httpsPort/csrfToken)
   Fix: all subprocess calls have explicit timeout; Unix socket paths surfaced for future use
 """
 
+import glob
 import json
+import os
 import platform
 import re
 import subprocess
@@ -34,6 +38,37 @@ def discover_language_servers() -> list[dict]:
     else:
         console.print(f"[red]Unsupported platform: {system}[/red]")
         return []
+
+
+def _hub_tokens() -> dict:
+    """Read CSRF tokens written by Antigravity's daemon.
+
+    Since Antigravity 2.35 the language_server cmdline no longer carries
+    --csrf_token (it is passed via stdin from the host bridge instead).
+    The daemon writes one file per hub instance:
+    ~/.gemini/antigravity/daemon/hub_<httpPort>.json with
+    {pid, httpsPort, httpPort, lsVersion, csrfToken}.
+    Returns {pid: {"csrf": str, "https_port": int}}; stale files for dead
+    processes are included here and filtered by the caller (pid match).
+    """
+    tokens = {}
+    pattern = os.path.join(
+        os.path.expanduser("~/.gemini/antigravity/daemon"), "hub_*.json"
+    )
+    for fname in glob.glob(pattern):
+        try:
+            with open(fname, encoding="utf-8") as f:
+                data = json.load(f)
+            pid = data.get("pid")
+            csrf = data.get("csrfToken")
+            if pid and csrf:
+                tokens[int(pid)] = {
+                    "csrf": csrf,
+                    "https_port": data.get("httpsPort"),
+                }
+        except Exception:
+            continue
+    return tokens
 
 
 def _discover_windows() -> list[dict]:
@@ -64,6 +99,15 @@ def _discover_windows() -> list[dict]:
             servers.append({"pid": pid, "csrf": csrf, "cmd": cmd})
     except Exception as e:
         console.print(f"[yellow]WMI query failed: {e}[/yellow]")
+    # 2.35+: cmdline has no --csrf_token; fill it from daemon hub files.
+    hub = _hub_tokens()
+    for srv in servers:
+        entry = hub.get(srv["pid"])
+        if entry:
+            if not srv.get("csrf"):
+                srv["csrf"] = entry["csrf"]
+            if entry.get("https_port"):
+                srv["https_port"] = entry["https_port"]
     return servers
 
 
@@ -189,7 +233,10 @@ def find_all_endpoints(
     seen_ports = set()
 
     for srv in servers:
-        ports = find_ports(srv["pid"])
+        ports = []
+        if srv.get("https_port"):
+            ports.append(srv["https_port"])
+        ports += [p for p in find_ports(srv["pid"]) if p not in ports]
         for port in ports:
             if port in seen_ports:
                 continue
